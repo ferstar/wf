@@ -1,0 +1,33 @@
+[project]
+name = "wf"
+version = "0.1.0"
+description = "A small Python orchestrator that runs pi/grok agents in tmux"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Jeff Zhang", email = "2854276+ferstar@users.noreply.github.com" },
+]
+dependencies = ["jsonschema>=4"]
+
+[project.urls]
+Homepage = "https://github.com/ferstar/wf"
+Repository = "https://github.com/ferstar/wf"
+Issues = "https://github.com/ferstar/wf/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+wf = "wf.cli:main"
+wf-fake = "wf.fake_engine:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
