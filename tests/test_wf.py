@@ -17,6 +17,9 @@ def _env(tmp: Path) -> dict[str, str]:
     env["WF_FAKE_ARGV0"] = str(FAKE)
     env["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
     env["WF_RUNS_ROOT"] = str(tmp / "runs")
+    env.pop("WF_MAX_CONCURRENT", None)
+    env.pop("WF_TMUX_SESSION", None)
+    env["WF_CONFIG"] = str(tmp / "no-wf-config.toml")
     snap = tmp / "tmux-windows.txt"
     if not snap.exists():
         snap.write_text("idle\nwf-keep\n", encoding="utf-8")
@@ -658,3 +661,142 @@ def test_command_tools_flags():
     )
     assert "--always-approve" not in grok_read
     assert "--tools" in grok_read
+
+
+def _cmd(**kwargs):
+    from wf.engine import command_for
+
+    base = dict(
+        prompt="p",
+        session_id="sid",
+        session_dir=Path("/tmp"),
+        cwd="/tmp/work",
+        resume=False,
+        standing=None,
+        override=None,
+    )
+    base.update(kwargs)
+    return command_for(**base)
+
+
+def test_claude_codex_command_flags():
+    none = _cmd(engine="claude", tools="none")
+    assert none[:3] == ["claude", "-p", "p"]
+    assert none[none.index("--tools") + 1] == ""
+    assert "dontAsk" in none
+    assert "bypassPermissions" not in none
+    assert "--session-id" in none
+    assert "sid" in none
+
+    read = _cmd(engine="claude", tools="read", standing="stay", resume=True)
+    assert "plan" in read
+    assert "Read,Grep,Glob,LS,Bash" in read
+    assert "Edit,Write,MultiEdit,NotebookEdit" in read
+    assert "--append-system-prompt" in read
+    assert "--resume" in read
+    assert "--session-id" not in read
+    assert "bypassPermissions" not in read
+
+    full = _cmd(engine="claude", tools="full")
+    assert "bypassPermissions" in full
+    assert "--tools" not in full
+
+    for tools in ("none", "read"):
+        cmd = _cmd(engine="codex", tools=tools, resume=True)
+        assert cmd[:2] == ["codex", "exec"]
+        assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+        assert cmd[cmd.index("--ask-for-approval") + 1] == "never"
+        assert cmd[cmd.index("--cd") + 1] == "/tmp/work"
+        assert cmd[-1] == "p"
+        assert "resume" not in cmd
+        assert "--full-auto" not in cmd
+        assert "danger-full-access" not in cmd
+
+    full_c = _cmd(engine="codex", tools="full")
+    assert full_c[full_c.index("--sandbox") + 1] == "workspace-write"
+    assert "danger-full-access" not in full_c
+
+    overridden = _cmd(engine="claude", tools="full", override="/bin/fake")
+    assert overridden[0] == "/bin/fake"
+    assert "-p" in overridden
+    assert "bypassPermissions" not in overridden
+
+
+def test_resolve_settings_priority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from wf.config import DEFAULT_MAX_CONCURRENT, DEFAULT_TMUX_SESSION, resolve_run_settings
+
+    monkeypatch.delenv("WF_MAX_CONCURRENT", raising=False)
+    monkeypatch.delenv("WF_TMUX_SESSION", raising=False)
+    monkeypatch.setenv("WF_CONFIG", str(tmp_path / "missing.toml"))
+    assert resolve_run_settings() == (DEFAULT_MAX_CONCURRENT, DEFAULT_TMUX_SESSION)
+
+    cfg = tmp_path / "wf.toml"
+    cfg.write_text('max_concurrent = 4\ntmux_session = "fromfile"\n', encoding="utf-8")
+    monkeypatch.setenv("WF_CONFIG", str(cfg))
+    assert resolve_run_settings() == (4, "fromfile")
+
+    monkeypatch.setenv("WF_MAX_CONCURRENT", "6")
+    monkeypatch.setenv("WF_TMUX_SESSION", "fromenv")
+    assert resolve_run_settings() == (6, "fromenv")
+    assert resolve_run_settings(cli_max="2", cli_session="fromcli") == (2, "fromcli")
+    assert resolve_run_settings(cli_max=8) == (8, "fromenv")
+
+
+def test_resolve_settings_rejects_bad_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from wf.config import resolve_run_settings
+
+    monkeypatch.delenv("WF_MAX_CONCURRENT", raising=False)
+    monkeypatch.delenv("WF_TMUX_SESSION", raising=False)
+    monkeypatch.setenv("WF_CONFIG", str(tmp_path / "missing.toml"))
+    with pytest.raises(ValueError):
+        resolve_run_settings(cli_max="0")
+    with pytest.raises(ValueError):
+        resolve_run_settings(cli_max="-3")
+    with pytest.raises(ValueError):
+        resolve_run_settings(cli_max="nope")
+    with pytest.raises(ValueError):
+        resolve_run_settings(cli_session="")
+    with pytest.raises(ValueError):
+        resolve_run_settings(cli_session="  ")
+    monkeypatch.setenv("WF_MAX_CONCURRENT", "0")
+    with pytest.raises(ValueError):
+        resolve_run_settings()
+    monkeypatch.setenv("WF_MAX_CONCURRENT", "2")
+    monkeypatch.setenv("WF_TMUX_SESSION", "")
+    with pytest.raises(ValueError):
+        resolve_run_settings()
+
+    bad = tmp_path / "bad.toml"
+    bad.write_text("max_concurrent = 0\n", encoding="utf-8")
+    monkeypatch.delenv("WF_MAX_CONCURRENT", raising=False)
+    monkeypatch.delenv("WF_TMUX_SESSION", raising=False)
+    monkeypatch.setenv("WF_CONFIG", str(bad))
+    with pytest.raises(ValueError):
+        resolve_run_settings()
+
+
+def test_cli_settings_land_in_meta(tmp_path: Path):
+    script = tmp_path / "meta_cfg.py"
+    script.write_text("log('hi')\n", encoding="utf-8")
+    env = _env(tmp_path)
+    proc = subprocess.run(
+        [_wf_bin(), "run", str(script), "--yes", "--name", "cfg", "--max-concurrent", "2", "--session", "bots"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    run = Path([ln for ln in proc.stdout.splitlines() if ln.startswith("WF_RUN_DIR=")][0].split("=", 1)[1])
+    meta = json.loads((run / "meta.json").read_text(encoding="utf-8"))
+    assert meta["max_concurrent"] == 2
+    assert meta["tmux_session"] == "bots"
+    bad = subprocess.run(
+        [_wf_bin(), "run", str(script), "--yes", "--max-concurrent", "0"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert bad.returncode != 0
+

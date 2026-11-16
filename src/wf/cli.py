@@ -11,6 +11,7 @@ import os
 import sys
 from pathlib import Path
 
+from wf.config import DEFAULT_TMUX_SESSION, resolve_run_settings
 from wf.engine import kill_recorded_windows
 from wf.runner import RUNS_ROOT, allocate_run_dir, execute
 
@@ -210,8 +211,24 @@ def cmd_run(ns: argparse.Namespace) -> int:
     run_dir = allocate_run_dir(name)
     args = _parse_args_list(ns.args or [])
     engine_bin = os.environ.get("WF_ENGINE_BIN") or None
+    try:
+        max_concurrent, tmux_session = resolve_run_settings(
+            cli_max=ns.max_concurrent,
+            cli_session=ns.session,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     code = asyncio.run(
-        execute(script, run_dir=run_dir, cwd=Path.cwd(), args=args, engine_bin=engine_bin)
+        execute(
+            script,
+            run_dir=run_dir,
+            cwd=Path.cwd(),
+            args=args,
+            engine_bin=engine_bin,
+            max_concurrent=max_concurrent,
+            tmux_session=tmux_session,
+        )
     )
     print(f"WF_RUN_DIR={run_dir}")
     return code
@@ -270,7 +287,7 @@ def _kill_one(run: Path) -> list[str]:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             meta = {}
-    session = meta.get("tmux_session") or "pi"
+    session = meta.get("tmux_session") or DEFAULT_TMUX_SESSION
     windows = list(meta.get("windows") or [])
     # 再扫一遍 session，避免 meta 没跟上。
     import subprocess
@@ -351,7 +368,7 @@ def cmd_gc(_: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="wf", description="Run pi/grok agents in tmux")
+    parser = argparse.ArgumentParser(prog="wf", description="Run pi, grok, claude, or codex agents in tmux")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     run = sub.add_parser("run", help="运行脚本")
@@ -359,6 +376,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--args", action="append", default=[])
     run.add_argument("--yes", action="store_true")
     run.add_argument("--name", default=None)
+    run.add_argument(
+        "--max-concurrent",
+        default=None,
+        help="同时运行的引擎窗口上限，>= 1。覆盖 WF_MAX_CONCURRENT 和配置文件",
+    )
+    run.add_argument(
+        "--session",
+        default=None,
+        help="tmux 会话名（不是 pi 的 --session）。覆盖 WF_TMUX_SESSION 和配置文件",
+    )
     run.set_defaults(func=cmd_run)
 
     ls = sub.add_parser("ls", help="列出 run")

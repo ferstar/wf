@@ -18,7 +18,7 @@ _LOG_LINE = 2000
 
 
 class _Gate:
-    """全局最多 3 个槽：本进程已占用的加上 tmux 里别人的非占位窗口。"""
+    """全局槽位：本进程已占用的加上 tmux 里别人的非占位窗口。上限是 state.slots。"""
 
     def __init__(self, state: Any):
         self.state = state
@@ -101,8 +101,8 @@ class Agent:
     ):
         if workspace not in ("inherit", "branch"):
             raise ValueError("workspace 只允许 inherit 或 branch（v1 不做 share）")
-        if engine not in ("pi", "grok"):
-            raise ValueError("engine 只允许 pi 或 grok")
+        if engine not in ("pi", "grok", "claude", "codex"):
+            raise ValueError("engine 只允许 pi、grok、claude 或 codex")
         if tools not in ("none", "read", "full"):
             raise ValueError("tools 只允许 none、read 或 full")
         if tools == "full" and workspace != "branch":
@@ -311,7 +311,7 @@ class Agent:
                     session_dir=session_dir,
                     cwd=str(work),
                     resume=resume,
-                    standing=standing if self.engine == "pi" else None,
+                    standing=standing if self.engine in ("pi", "claude") else None,
                     override=st.engine_bin,
                     tools=self.tools,
                 )

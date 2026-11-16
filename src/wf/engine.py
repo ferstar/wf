@@ -1,4 +1,4 @@
-"""在 tmux session `pi` 的新窗口里跑一次引擎，并把 stdout/stderr 落盘。"""
+"""在 tmux 会话的新窗口里跑一次引擎，并把 stdout/stderr 落盘。"""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def command_for(
     override: str | None,
     tools: str = "none",
 ) -> list[str]:
-    """拼 pi / grok / 假引擎命令。prompt 作为参数，由调用方写入 shell 时再引用。"""
+    """拼 pi / grok / claude / codex / 假引擎命令。prompt 作为参数，由调用方写入 shell 时再引用。"""
     binary = _which_engine(engine, override)
     if override:
         cmd = [
@@ -138,6 +138,53 @@ def command_for(
         else:
             cmd += ["--session-id", session_id]
         return cmd
+    if engine == "claude":
+        # 标志来自 Claude Code CLI 文档，不是本机 --help。
+        # https://code.claude.com/docs/en/cli-reference
+        cmd = ["claude", "-p", prompt]
+        if tools == "none":
+            cmd += ["--tools", "", "--permission-mode", "dontAsk"]
+        elif tools == "read":
+            cmd += [
+                "--permission-mode",
+                "plan",
+                "--tools",
+                "Read,Grep,Glob,LS,Bash",
+                "--disallowedTools",
+                "Edit,Write,MultiEdit,NotebookEdit",
+            ]
+        elif tools == "full":
+            cmd += ["--permission-mode", "bypassPermissions"]
+        else:
+            raise ValueError(f"未知 tools: {tools}")
+        if standing:
+            cmd += ["--append-system-prompt", standing]
+        if resume:
+            cmd += ["--resume", session_id]
+        else:
+            cmd += ["--session-id", session_id]
+        return cmd
+    if engine == "codex":
+        # 标志来自 Codex CLI 文档。没有真正的无工具模式；none 与 read 都是只读沙箱。
+        # https://developers.openai.com/codex/cli/reference
+        if tools == "none" or tools == "read":
+            sandbox = "read-only"
+        elif tools == "full":
+            sandbox = "workspace-write"
+        else:
+            raise ValueError(f"未知 tools: {tools}")
+        # 官方没有可预先指定的 session id。每轮新 exec；续轮不传 resume。
+        return [
+            "codex",
+            "exec",
+            "--sandbox",
+            sandbox,
+            "--ask-for-approval",
+            "never",
+            "--cd",
+            cwd,
+            prompt,
+        ]
     raise ValueError(f"未知 engine: {engine}")
 
 
@@ -325,7 +372,7 @@ async def run_in_tmux(
     text_out = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
     text_err = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
     output_path.write_text(text_out + ("" if not text_err else "\n----- stderr -----\n" + text_err), encoding="utf-8")
-    # 窗口留着会占全局 3 槽。输出已经落盘，关掉窗口。
+    # 窗口留着会占并发槽。输出已经落盘，关掉窗口。
     kill_window(state.tmux_session, window)
     if pid:
         kill_pid_tree(pid)

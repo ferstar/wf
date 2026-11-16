@@ -1,7 +1,7 @@
 [project]
 name = "wf"
 version = "0.1.0"
-description = "A small Python orchestrator that runs pi/grok agents in tmux"
+description = "A small Python orchestrator that runs pi, grok, claude, or codex agents in tmux"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }

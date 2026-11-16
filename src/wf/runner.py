@@ -16,6 +16,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import wf
+from wf.config import DEFAULT_MAX_CONCURRENT, DEFAULT_TMUX_SESSION
 from wf.primitives import check_unused
 from wf.state import CURRENT, RunState
 
@@ -139,7 +140,16 @@ def _summary(state: RunState, *, ok: bool, elapsed: float, error: str | None) ->
     }
 
 
-async def execute(script: Path, *, run_dir: Path, cwd: Path, args: dict[str, str], engine_bin: str | None) -> int:
+async def execute(
+    script: Path,
+    *,
+    run_dir: Path,
+    cwd: Path,
+    args: dict[str, str],
+    engine_bin: str | None,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+    tmux_session: str = DEFAULT_TMUX_SESSION,
+) -> int:
     os.environ["PYTHONUNBUFFERED"] = "1"
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -153,7 +163,14 @@ async def execute(script: Path, *, run_dir: Path, cwd: Path, args: dict[str, str
     (run_dir / "script.py").write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
     (run_dir / "args.json").write_text(json.dumps(args, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (run_dir / "events.jsonl").write_text("", encoding="utf-8")
-    state = RunState(run_dir=run_dir, cwd=cwd.resolve(), args=dict(args), engine_bin=engine_bin)
+    state = RunState(
+        run_dir=run_dir,
+        cwd=cwd.resolve(),
+        args=dict(args),
+        engine_bin=engine_bin,
+        tmux_session=tmux_session,
+        slots=max_concurrent,
+    )
     try:
         os.setpgrp()
     except OSError:

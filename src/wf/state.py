@@ -29,7 +29,7 @@ class RunState:
     agents: list[Any] = field(default_factory=list)
     turns: list[Any] = field(default_factory=list)
     next_agent: int = 1
-    # 全局最多 3 个引擎进程。waiters 按 FIFO 授予名额。
+    # 同时运行的引擎进程上限。waiters 按 FIFO 授予名额。默认 3。
     slots: int = 3
     active: int = 0
     waiters: list[Any] = field(default_factory=list)
@@ -73,6 +73,7 @@ class RunState:
         data.update(extra)
         data["windows"] = list(self.windows)
         data["tmux_session"] = self.tmux_session
+        data["max_concurrent"] = self.slots
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
